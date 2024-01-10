@@ -1,17 +1,50 @@
 # frozen_string_literal: true
 
+require "securerandom"
+
 module CommandHelpers
-  def command_output
-    tmp_stderr = Tempfile.create
+  DUMMY_TEST_APP_PREFIX = "dummy-test"
 
-    allow_any_instance_of(Command::Base).to receive(:progress).and_return(tmp_stderr) # rubocop:disable RSpec/AnyInstance
+  def dummy_test_app(extra_prefix = "")
+    prefix = "#{DUMMY_TEST_APP_PREFIX}-"
+    prefix += "#{extra_prefix}-" unless extra_prefix.empty?
+    random_suffix = SecureRandom.hex(4)
 
-    yield
+    "#{prefix}#{random_suffix}"
+  end
 
-    tmp_stderr.rewind
-    output = tmp_stderr.read
-    tmp_stderr.close
+  def run_command(*args) # rubocop:disable Metrics/MethodLength
+    result = {
+      status: 0,
+      stderr: "",
+      stdout: ""
+    }
 
-    output
+    original_stderr = $stderr
+    original_stdout = $stdout
+
+    $stderr = Tempfile.create
+    $stdout = Tempfile.create
+
+    begin
+      Cpl::Cli.start(args)
+
+      result[:status] = $CHILD_STATUS.exitstatus
+    rescue SystemExit => e
+      result[:status] = e.status
+    end
+
+    $stderr.rewind
+    result[:stderr] = $stderr.read
+    $stderr.close
+
+    $stdout.rewind
+    result[:stdout] = $stdout.read
+    $stdout.close
+
+    $stderr = original_stderr
+    $stdout = original_stdout
+
+    result
   end
 end
