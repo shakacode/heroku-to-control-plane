@@ -49,6 +49,7 @@ class Controlplane # rubocop:disable Metrics/ClassLength
     # Might need to use `docker buildx build` if compatiblitity issues arise
     cmd = "docker build --platform=linux/amd64 -t #{image} -f #{dockerfile}"
     cmd += " --progress=plain" if ControlplaneApiDirect.trace
+    cmd += " > /dev/null 2>&1" if ENV["RAILS_ENV"] == "test"
 
     cmd += " #{docker_args.join(' ')}" if docker_args.any?
     build_args.each { |build_arg| cmd += " --build-arg #{build_arg}" }
@@ -82,7 +83,8 @@ class Controlplane # rubocop:disable Metrics/ClassLength
 
   def image_push(image)
     cmd = "docker push #{image}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
