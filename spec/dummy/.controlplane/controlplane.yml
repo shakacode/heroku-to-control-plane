@@ -1,0 +1,100 @@
+aliases:
+  common: &common
+    cpln_org: shakacode-heroku-to-control-plane-ci
+    default_location: aws-us-east-2
+
+    one_off_workload: rails
+    app_workloads:
+      - rails
+    additional_workloads:
+      - redis
+      - postgres
+
+apps:
+  dummy-staging:
+    <<: *common
+
+  dummy-production:
+    <<: *common
+
+  dummy-review:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+
+  dummy-test-unique:
+    <<: *common
+
+    image_retention_max_qty: 3
+    image_retention_days: 30
+
+  dummy-test-unique-other:
+    <<: *common
+
+    image_retention_max_qty: 3
+    image_retention_days: 30
+
+  dummy-test-with-nothing:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+
+  dummy-test-with-unexistent-dockerfile:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    dockerfile: Dockerfile.unexistent
+
+  dummy-test-with-image-retention-max-qty:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    image_retention_max_qty: 3
+
+  dummy-test-with-image-retention-days:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    image_retention_days: 30
+
+  dummy-test-with-rails-with-non-app-image:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    app_workloads:
+      - rails
+      - rails-with-non-app-image
+  
+  dummy-test-without-org:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    cpln_org:
+
+  dummy-test-with-different-org:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    cpln_org: shakacode-heroku-to-control-plane-ci
+
+  dummy-test-with-undefined-upstream:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    upstream: undefined
+
+  dummy-test:
+    <<: *common
+
+    match_if_app_name_starts_with: true
+    image_retention_max_qty: 3
+    image_retention_days: 30
+    stale_app_image_deployed_days: 30
+    setup_app_templates:
+      - gvc
+      - rails
+      - redis
+      - postgres
+    default_domain: cpl.rafaelgomes.xyz
+    maintenance_workload: maintenance
+    upstream: dummy-test-upstream

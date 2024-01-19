@@ -1,0 +1,14 @@
+kind: gvc
+name: APP_GVC
+spec:
+  env:
+    - name: REDIS_URL
+      value: redis://redis.APP_GVC.cpln.local:6379
+    - name: DATABASE_URL
+      value: postgres://postgres:password@postgres.APP_GVC.cpln.local:5432/APP_GVC
+  staticPlacement:
+    locationLinks:
+      - /org/APP_ORG/location/APP_LOCATION
+---
+kind: identity
+name: APP_GVC-identity

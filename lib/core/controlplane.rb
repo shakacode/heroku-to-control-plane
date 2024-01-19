@@ -25,13 +25,15 @@ class Controlplane # rubocop:disable Metrics/ClassLength
   def profile_create(profile, token)
     sensitive_data_pattern = /(?<=--token )(\S+)/
     cmd = "cpln profile create #{profile} --token #{token}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd, sensitive_data_pattern: sensitive_data_pattern)
   end
 
   def profile_delete(profile)
     cmd = "cpln profile delete #{profile}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
@@ -49,6 +51,7 @@ class Controlplane # rubocop:disable Metrics/ClassLength
     # Might need to use `docker buildx build` if compatiblitity issues arise
     cmd = "docker build --platform=linux/amd64 -t #{image} -f #{dockerfile}"
     cmd += " --progress=plain" if ControlplaneApiDirect.trace
+    cmd += " > /dev/null 2>&1" if ENV["RAILS_ENV"] == "test"
 
     cmd += " #{docker_args.join(' ')}" if docker_args.any?
     build_args.each { |build_arg| cmd += " --build-arg #{build_arg}" }
@@ -64,13 +67,14 @@ class Controlplane # rubocop:disable Metrics/ClassLength
 
   def image_login(org_name = config.org)
     cmd = "cpln image docker-login --org #{org_name}"
-    cmd += " > /dev/null 2>&1" if Shell.should_hide_output?
+    cmd += " > /dev/null 2>&1" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
   def image_pull(image)
     cmd = "docker pull #{image}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
@@ -82,7 +86,8 @@ class Controlplane # rubocop:disable Metrics/ClassLength
 
   def image_push(image)
     cmd = "docker push #{image}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
@@ -277,9 +282,9 @@ class Controlplane # rubocop:disable Metrics/ClassLength
     domain_data
   end
 
-  def get_domain_workload(data)
+  def domain_workload_matches?(data, workload)
     route = find_domain_route(data)
-    route["workloadLink"].split("/").last
+    route["workloadLink"].match?(%r{/org/#{org}/gvc/#{gvc}/workload/#{workload}})
   end
 
   def set_domain_workload(data, workload)

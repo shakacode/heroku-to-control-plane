@@ -44,8 +44,8 @@ module Command
     private
 
     def ensure_docker_running!
-      `docker version > /dev/null 2>&1`
-      return if $CHILD_STATUS.success?
+      result = Shell.cmd("docker version > /dev/null 2>&1")
+      return if result[:success]
 
       raise "Can't run Docker. Please make sure that it's installed and started, then try again."
     end

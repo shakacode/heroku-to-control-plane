@@ -3,70 +3,108 @@
 require "spec_helper"
 
 describe Command::CopyImageFromUpstream do
-  # rubocop:disable RSpec/AnyInstance
-  before do
-    allow(ENV).to receive(:fetch).with("CPLN_ENDPOINT", "https://api.cpln.io").and_return("https://api.cpln.io")
-    allow(ENV).to receive(:fetch).with("CPLN_TOKEN", nil).and_return("token")
-    allow(ENV).to receive(:fetch).with("CPLN_ORG", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_ORG_UPSTREAM", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_APP", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_UPSTREAM", nil).and_return(nil)
-    allow_any_instance_of(Config).to receive(:config_file_path).and_return("spec/fixtures/config.yml")
-    allow_any_instance_of(described_class).to receive(:ensure_docker_running!)
-    allow_any_instance_of(Controlplane).to receive(:profile_exists?).and_return(false)
-    allow_any_instance_of(Controlplane).to receive(:profile_create).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:profile_switch).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:profile_delete).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:image_login).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:image_pull).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:image_tag).and_return(true)
-    allow_any_instance_of(Controlplane).to receive(:image_push).and_return(true)
+  it "raises error if Docker is not running" do
+    allow(Shell).to receive(:cmd).and_return({ success: false })
+
+    app = dummy_test_app
+
+    result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", "token")
+
+    expect(Shell).to have_received(:cmd).with(include("docker version")).once
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't run Docker")
   end
 
-  it "copies commit from upstream if exists", vcr: true do
-    allow_any_instance_of(Command::Base).to receive(:latest_image)
-      .with("my-app-staging", "my-org-staging").and_return("my-app-staging:0_123abc")
-    allow_any_instance_of(Command::Base).to receive(:latest_image)
-      .with("my-app-production", "my-org-production").and_return("my-app-production:8_456def")
+  it "raises error if 'upstream' is not defined" do
+    app = dummy_test_app("with-nothing")
 
-    expected_output = <<~OUTPUT
-      Creating upstream profile... #{Shell.color('done!', :green)}
-      Fetching upstream image URL... #{Shell.color('done!', :green)}
-      Fetching app image URL... #{Shell.color('done!', :green)}
-      Pulling image from 'my-org-staging.registry.cpln.io/my-app-staging:0_123abc'... #{Shell.color('done!', :green)}
-      Pushing image to 'my-org-production.registry.cpln.io/my-app-production:9_123abc'... #{Shell.color('done!', :green)}
-      Deleting upstream profile... #{Shell.color('done!', :green)}
-    OUTPUT
+    result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", "token")
 
-    output = command_output do
-      args = ["-a", "my-app-production", "--upstream-token", "upstream_token"]
-      Cpl::Cli.start([described_class::NAME, *args])
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find option 'upstream'")
+  end
+
+  it "raises error if upstream app is not defined" do
+    app = dummy_test_app("with-undefined-upstream")
+
+    result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", "token")
+
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find option 'cpln_org' for app 'undefined'")
+  end
+
+  it "raises error if 'cpln_org' is not defined for upstream app" do
+    upstream_app = dummy_test_app("without-org")
+    app = dummy_test_app
+
+    ENV["CPLN_UPSTREAM"] = upstream_app
+
+    result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", "token")
+
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find option 'cpln_org' for app '#{upstream_app}'")
+  end
+
+  it "fails to fetch upstream image URL if using invalid token for upstream org" do
+    upstream_app = dummy_test_app("with-different-org")
+    app = dummy_test_app
+
+    ENV["CPLN_UPSTREAM"] = upstream_app
+
+    run_command("apply-template", "gvc", "-a", upstream_app)
+    run_command("apply-template", "gvc", "-a", app)
+    run_command("build-image", "-a", upstream_app)
+    result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", "token")
+    run_command("delete", "-a", upstream_app, "--yes")
+    run_command("delete", "-a", app, "--yes")
+
+    expect(result[:stderr]).to match(/Fetching upstream image URL[.]+? failed!/)
+  end
+
+  context "when using valid token for upstream org" do
+    let(:token) { `cpln profile token default`.strip }
+    let(:upstream_app) { dummy_test_app("with-different-org") }
+    let(:app) { dummy_test_app }
+
+    before do
+      ENV["CPLN_UPSTREAM"] = upstream_app
+
+      run_command("apply-template", "gvc", "-a", upstream_app)
+      run_command("apply-template", "gvc", "-a", app)
     end
 
-    expect(output).to eq(expected_output)
-  end
-
-  it "does not copy commit from upstream if not exists", vcr: true do
-    allow_any_instance_of(Command::Base).to receive(:latest_image)
-      .with("my-app-staging", "my-org-staging").and_return("my-app-staging:0")
-    allow_any_instance_of(Command::Base).to receive(:latest_image)
-      .with("my-app-production", "my-org-production").and_return("my-app-production:8_456def")
-
-    expected_output = <<~OUTPUT
-      Creating upstream profile... #{Shell.color('done!', :green)}
-      Fetching upstream image URL... #{Shell.color('done!', :green)}
-      Fetching app image URL... #{Shell.color('done!', :green)}
-      Pulling image from 'my-org-staging.registry.cpln.io/my-app-staging:0'... #{Shell.color('done!', :green)}
-      Pushing image to 'my-org-production.registry.cpln.io/my-app-production:9'... #{Shell.color('done!', :green)}
-      Deleting upstream profile... #{Shell.color('done!', :green)}
-    OUTPUT
-
-    output = command_output do
-      args = ["-a", "my-app-production", "--upstream-token", "upstream_token"]
-      Cpl::Cli.start([described_class::NAME, *args])
+    after do
+      run_command("delete", "-a", upstream_app, "--yes")
+      run_command("delete", "-a", app, "--yes")
     end
 
-    expect(output).to eq(expected_output)
+    it "copies latest image from upstream" do
+      # Simulates looping through generated profile names to avoid conflicts
+      allow_any_instance_of(Controlplane).to receive(:profile_exists?).and_return(true, false) # rubocop:disable RSpec/AnyInstance
+
+      run_command("build-image", "-a", upstream_app)
+      result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", token)
+
+      expect(result[:stderr]).to match(%r{Pulling image from '.+?/#{upstream_app}:1'})
+      expect(result[:stderr]).to match(%r{Pushing image to '.+?/#{app}:1'})
+    end
+
+    it "copies latest image from upstream along with commit hash" do
+      run_command("build-image", "-a", upstream_app, "--commit", "abc123")
+      result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", token)
+
+      expect(result[:stderr]).to match(%r{Pulling image from '.+?/#{upstream_app}:1_abc123'})
+      expect(result[:stderr]).to match(%r{Pushing image to '.+?/#{app}:1_abc123'})
+    end
+
+    it "copies specific image from upstream" do
+      run_command("build-image", "-a", upstream_app)
+      run_command("build-image", "-a", upstream_app)
+      result = run_command("copy-image-from-upstream", "-a", app, "--upstream-token", token,
+                           "--image", "#{upstream_app}:1")
+
+      expect(result[:stderr]).to match(%r{Pulling image from '.+?/#{upstream_app}:1'})
+      expect(result[:stderr]).to match(%r{Pushing image to '.+?/#{app}:1'})
+    end
   end
-  # rubocop:enable RSpec/AnyInstance
 end

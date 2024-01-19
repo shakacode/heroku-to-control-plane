@@ -3,44 +3,40 @@
 require "spec_helper"
 
 describe Command::MaintenanceSetPage do
-  before do
-    allow(ENV).to receive(:fetch).with("CPLN_ENDPOINT", "https://api.cpln.io").and_return("https://api.cpln.io")
-    allow(ENV).to receive(:fetch).with("CPLN_TOKEN", nil).and_return("token")
-    allow(ENV).to receive(:fetch).with("CPLN_ORG", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_APP", nil).and_return(nil)
-    allow_any_instance_of(Config).to receive(:config_file_path).and_return("spec/fixtures/config.yml") # rubocop:disable RSpec/AnyInstance
+  let(:example_maintenance_page) { "https://example.com/maintenance.html" }
+
+  it "raises error if maintenance workload does not exist" do
+    app = dummy_test_app
+
+    run_command("apply-template", "gvc", "-a", app)
+    result = run_command("maintenance:set-page", example_maintenance_page, "-a", app)
+    run_command("delete", "-a", app, "--yes")
+
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find workload 'maintenance'")
   end
 
-  it "displays error if maintenance workload is not found", vcr: true do
-    allow(Shell).to receive(:abort)
-      .with("Can't find workload 'maintenance', " \
-            "please create it with 'cpl apply-template maintenance -a my-app-staging'.")
+  context "when maintenance workload exists" do
+    it "does nothing if maintenance workload does not use shakacode image" do
+      app = dummy_test_app("with-maintenance-with-non-shakacode-image")
 
-    args = ["https://example.com/maintenance.html", "-a", "my-app-staging"]
-    Cpl::Cli.start([described_class::NAME, *args])
+      run_command("apply-template", "gvc", "maintenance-with-non-shakacode-image", "-a", app)
+      result = run_command("maintenance:set-page", example_maintenance_page, "-a", app)
+      run_command("delete", "-a", app, "--yes")
 
-    expect(Shell).to have_received(:abort).once
-  end
-
-  it "does nothing if maintenance workload does not use shakacode image", vcr: true do
-    output = command_output do
-      args = ["https://example.com/maintenance.html", "-a", "my-app-staging"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(result[:stderr])
+        .not_to match(/Setting '#{example_maintenance_page}' as the page for maintenance mode[.]+? done!/)
     end
 
-    expect(output).to be_empty
-  end
+    it "sets page for maintenance workload" do
+      app = dummy_test_app
 
-  it "sets page for maintenance mode", vcr: true do
-    expected_output = <<~OUTPUT
-      Setting 'https://example.com/maintenance.html' as the page for maintenance mode... #{Shell.color('done!', :green)}
-    OUTPUT
+      run_command("apply-template", "gvc", "maintenance", "-a", app)
+      result = run_command("maintenance:set-page", example_maintenance_page, "-a", app)
+      run_command("delete", "-a", app, "--yes")
 
-    output = command_output do
-      args = ["https://example.com/maintenance.html", "-a", "my-app-staging"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(result[:stderr])
+        .to match(/Setting '#{example_maintenance_page}' as the page for maintenance mode[.]+? done!/)
     end
-
-    expect(output).to eq(expected_output)
   end
 end

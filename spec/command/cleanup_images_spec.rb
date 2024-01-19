@@ -3,164 +3,142 @@
 require "spec_helper"
 
 describe Command::CleanupImages do
-  before do
-    allow(ENV).to receive(:fetch).with("CPLN_ENDPOINT", "https://api.cpln.io").and_return("https://api.cpln.io")
-    allow(ENV).to receive(:fetch).with("CPLN_TOKEN", nil).and_return("token")
-    allow(ENV).to receive(:fetch).with("CPLN_ORG", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_APP", nil).and_return(nil)
-    allow_any_instance_of(Config).to receive(:config_file_path).and_return("spec/fixtures/config.yml") # rubocop:disable RSpec/AnyInstance
+  it "raises error if 'image_retention_max_qty' or 'image_retention_days' are not defined" do
+    app = dummy_test_app("with-nothing")
 
-    Timecop.freeze(Time.local(2023, 8, 23))
+    result = run_command("cleanup-images", "-a", app)
+
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find either option 'image_retention_max_qty' or 'image_retention_days'")
   end
 
-  it "displays error if 'image_retention_max_qty' and 'image_retention_days' are not set" do
-    allow(Shell).to receive(:abort).with("Can't find either option 'image_retention_max_qty' " \
-                                         "or 'image_retention_days' for app 'my-app-test-1' in 'controlplane.yml'.")
+  it "displays message if there are no images to delete" do
+    app = dummy_test_app
 
-    args = ["-a", "my-app-test-1"]
-    Cpl::Cli.start([described_class::NAME, *args])
+    result = run_command("cleanup-images", "-a", app)
 
-    expect(Shell).to have_received(:abort).once
+    expect(result[:stderr]).to include("No images to delete")
   end
 
-  it "displays empty message", vcr: true do
-    expected_output = <<~OUTPUT
-      No images to delete.
-    OUTPUT
+  context "when there are images to delete" do
+    it "lists images based on max quantity" do
+      allow(Shell).to receive(:confirm).and_return(false)
 
-    output = command_output do
-      args = ["-a", "my-app-test-2"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      app = dummy_test_app("with-image-retention-max-qty")
+
+      run_command("apply-template", "gvc", "-a", app)
+      # Excess image, will be listed
+      run_command("build-image", "-a", app)
+      # Images that don't exceed max quantity of 3, won't be listed
+      run_command("build-image", "-a", app)
+      run_command("build-image", "-a", app)
+      run_command("build-image", "-a", app)
+      # Latest image, excluded from quantity calculation, won't be listed
+      run_command("build-image", "-a", app)
+      result = run_command("cleanup-images", "-a", app)
+      run_command("delete", "-a", app, "--yes")
+
+      expect(Shell).to have_received(:confirm).with(include("1 images")).once
+      expect(result[:stderr]).to match(/#{app}:1 \(.+? - exceeds max quantity of 3\)/)
     end
 
-    expect(output).to eq(expected_output)
-  end
+    it "lists images based on days" do
+      allow(Shell).to receive(:confirm).and_return(false)
 
-  it "lists images to delete based on max quantity and days", vcr: true do
-    allow(Shell).to receive(:confirm).with("\nAre you sure you want to delete these 6 images?")
-                                     .and_return(false)
+      app = dummy_test_app("with-image-retention-days")
 
-    expected_output = <<~OUTPUT
-      Images to delete:
-        - my-app-test-3:508_149ba15 (#{Shell.color('2023-08-02T08:35:20+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:509_1ddaddb (#{Shell.color('2023-08-03T08:50:12+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:510_ad671e6 (#{Shell.color('2023-08-04T01:17:29+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:511_7ef99dd (#{Shell.color('2023-08-05T02:51:14+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:512_346384f (#{Shell.color('2023-08-06T03:08:27+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:513_ec7930a (#{Shell.color('2023-08-07T13:20:18+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-    OUTPUT
+      run_command("apply-template", "gvc", "-a", app)
+      # Old image, will be listed
+      run_command("build-image", "-a", app)
+      # Latest image, excluded from days calculation, won't be listed
+      run_command("build-image", "-a", app)
+      travel_to_days_later(30)
+      result = run_command("cleanup-images", "-a", app)
+      travel_back
+      run_command("delete", "-a", app, "--yes")
 
-    output = command_output do
-      args = ["-a", "my-app-test-3"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(Shell).to have_received(:confirm).with(include("1 images")).once
+      expect(result[:stderr]).to match(/#{app}:1 \(.+? - older than 30 days\)/)
     end
 
-    expect(Shell).to have_received(:confirm).once
-    expect(output).to eq(expected_output)
-  end
+    it "only lists images from exact app" do
+      allow(Shell).to receive(:confirm).and_return(false)
 
-  it "lists images to delete based on max quantity", vcr: true do
-    allow(Shell).to receive(:confirm).with("\nAre you sure you want to delete these 6 images?")
-                                     .and_return(false)
+      target_app = dummy_test_app
+      another_app = dummy_test_app
 
-    expected_output = <<~OUTPUT
-      Images to delete:
-        - my-app-test-4:508_149ba15 (#{Shell.color('2023-08-02T08:35:20+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-        - my-app-test-4:509_1ddaddb (#{Shell.color('2023-08-03T08:50:12+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-        - my-app-test-4:510_ad671e6 (#{Shell.color('2023-08-04T01:17:29+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-        - my-app-test-4:511_7ef99dd (#{Shell.color('2023-08-05T02:51:14+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-        - my-app-test-4:512_346384f (#{Shell.color('2023-08-06T03:08:27+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-        - my-app-test-4:513_ec7930a (#{Shell.color('2023-08-07T13:20:18+00:00', :red)} - #{Shell.color('exceeds max quantity of 12', :red)})
-    OUTPUT
+      run_command("apply-template", "gvc", "-a", target_app)
+      run_command("apply-template", "gvc", "-a", another_app)
+      # Old image from target app, will be listed
+      run_command("build-image", "-a", target_app)
+      # Latest image from target app, won't be listed
+      run_command("build-image", "-a", target_app)
+      # Images from another app, won't be listed
+      run_command("build-image", "-a", another_app)
+      run_command("build-image", "-a", another_app)
+      travel_to_days_later(30)
+      result = run_command("cleanup-images", "-a", target_app)
+      travel_back
+      run_command("delete", "-a", target_app, "--yes")
+      run_command("delete", "-a", another_app, "--yes")
 
-    output = command_output do
-      args = ["-a", "my-app-test-4"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(Shell).to have_received(:confirm).with(include("1 images")).once
+      expect(result[:stderr]).to match(/#{target_app}:1 \(.+? - older than 30 days\)/)
     end
 
-    expect(Shell).to have_received(:confirm).once
-    expect(output).to eq(expected_output)
-  end
+    it "lists images from all matching apps" do
+      allow(Shell).to receive(:confirm).and_return(false)
 
-  it "lists images to delete based on days", vcr: true do
-    allow(Shell).to receive(:confirm).with("\nAre you sure you want to delete these 6 images?")
-                                     .and_return(false)
+      first_app = dummy_test_app
+      second_app = dummy_test_app
 
-    expected_output = <<~OUTPUT
-      Images to delete:
-        - my-app-test-5:508_149ba15 (#{Shell.color('2023-08-02T08:35:20+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-        - my-app-test-5:509_1ddaddb (#{Shell.color('2023-08-03T08:50:12+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-        - my-app-test-5:510_ad671e6 (#{Shell.color('2023-08-04T01:17:29+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-        - my-app-test-5:511_7ef99dd (#{Shell.color('2023-08-05T02:51:14+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-        - my-app-test-5:512_346384f (#{Shell.color('2023-08-06T03:08:27+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-        - my-app-test-5:513_ec7930a (#{Shell.color('2023-08-07T13:20:18+00:00', :red)} - #{Shell.color('older than 12 days', :red)})
-    OUTPUT
+      run_command("apply-template", "gvc", "-a", first_app)
+      run_command("apply-template", "gvc", "-a", second_app)
+      # Old image from first app, will be listed
+      run_command("build-image", "-a", first_app)
+      # Latest image from first app, won't be listed
+      run_command("build-image", "-a", first_app)
+      # Old image from second app, will be listed
+      run_command("build-image", "-a", second_app)
+      # Latest image from second app, won't be listed
+      run_command("build-image", "-a", second_app)
+      travel_to_days_later(30)
+      result = run_command("cleanup-images", "-a", CommandHelpers::DUMMY_TEST_APP_PREFIX)
+      travel_back
+      run_command("delete", "-a", first_app, "--yes")
+      run_command("delete", "-a", second_app, "--yes")
 
-    output = command_output do
-      args = ["-a", "my-app-test-5"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(Shell).to have_received(:confirm).with(include("2 images")).once
+      expect(result[:stderr]).to match(/#{first_app}:1 \(.+? - older than 30 days\)/)
+      expect(result[:stderr]).to match(/#{second_app}:1 \(.+? - older than 30 days\)/)
     end
 
-    expect(Shell).to have_received(:confirm).once
-    expect(output).to eq(expected_output)
-  end
+    it "asks for confirmation and deletes images" do
+      allow(Shell).to receive(:confirm).and_return(true)
 
-  it "deletes images", vcr: true do
-    allow(Shell).to receive(:confirm).with("\nAre you sure you want to delete these 6 images?")
-                                     .and_return(true)
+      app = dummy_test_app
 
-    expected_output = <<~OUTPUT
-      Images to delete:
-        - my-app-test-3:508_149ba15 (#{Shell.color('2023-08-02T08:35:20+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:509_1ddaddb (#{Shell.color('2023-08-03T08:50:12+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:510_ad671e6 (#{Shell.color('2023-08-04T01:17:29+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:511_7ef99dd (#{Shell.color('2023-08-05T02:51:14+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:512_346384f (#{Shell.color('2023-08-06T03:08:27+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:513_ec7930a (#{Shell.color('2023-08-07T13:20:18+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
+      run_command("build-image", "-a", app)
+      travel_to_days_later(30)
+      result = run_command("cleanup-images", "-a", app)
+      travel_back
 
-      Deleting image 'my-app-test-3:508_149ba15'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:509_1ddaddb'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:510_ad671e6'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:511_7ef99dd'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:512_346384f'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:513_ec7930a'... #{Shell.color('done!', :green)}
-    OUTPUT
-
-    output = command_output do
-      args = ["-a", "my-app-test-3"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(Shell).to have_received(:confirm).with(include("1 images")).once
+      expect(result[:stderr]).to match(/Deleting image '#{app}:1'[.]+? done!/)
     end
 
-    expect(Shell).to have_received(:confirm).once
-    expect(output).to eq(expected_output)
-  end
+    it "skips confirmation and deletes images" do
+      allow(Shell).to receive(:confirm).and_return(false)
 
-  it "skips delete confirmation", vcr: true do
-    allow(Shell).to receive(:confirm)
+      app = dummy_test_app
 
-    expected_output = <<~OUTPUT
-      Images to delete:
-        - my-app-test-3:508_149ba15 (#{Shell.color('2023-08-02T08:35:20+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:509_1ddaddb (#{Shell.color('2023-08-03T08:50:12+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:510_ad671e6 (#{Shell.color('2023-08-04T01:17:29+00:00', :red)} - #{Shell.color('exceeds max quantity of 15', :red)})
-        - my-app-test-3:511_7ef99dd (#{Shell.color('2023-08-05T02:51:14+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:512_346384f (#{Shell.color('2023-08-06T03:08:27+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
-        - my-app-test-3:513_ec7930a (#{Shell.color('2023-08-07T13:20:18+00:00', :red)} - #{Shell.color('older than 15 days', :red)})
+      run_command("build-image", "-a", app)
+      travel_to_days_later(30)
+      result = run_command("cleanup-images", "-a", app, "--yes")
+      travel_back
 
-      Deleting image 'my-app-test-3:508_149ba15'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:509_1ddaddb'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:510_ad671e6'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:511_7ef99dd'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:512_346384f'... #{Shell.color('done!', :green)}
-      Deleting image 'my-app-test-3:513_ec7930a'... #{Shell.color('done!', :green)}
-    OUTPUT
-
-    output = command_output do
-      args = ["-a", "my-app-test-3", "-y"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(Shell).not_to have_received(:confirm)
+      expect(result[:stderr]).to match(/Deleting image '#{app}:1'[.]+? done!/)
     end
-
-    expect(Shell).not_to have_received(:confirm)
-    expect(output).to eq(expected_output)
   end
 end

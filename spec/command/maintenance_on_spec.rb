@@ -3,77 +3,57 @@
 require "spec_helper"
 
 describe Command::MaintenanceOn do
-  # rubocop:disable RSpec/AnyInstance
-  before do
-    allow(ENV).to receive(:fetch).with("CPLN_ENDPOINT", "https://api.cpln.io").and_return("https://api.cpln.io")
-    allow(ENV).to receive(:fetch).with("CPLN_TOKEN", nil).and_return("token")
-    allow(ENV).to receive(:fetch).with("CPLN_ORG", nil).and_return(nil)
-    allow(ENV).to receive(:fetch).with("CPLN_APP", nil).and_return(nil)
-    allow_any_instance_of(Config).to receive(:config_file_path).and_return("spec/fixtures/config.yml")
-    allow_any_instance_of(described_class).to receive(:sleep).and_return(true)
-  end
-  # rubocop:enable RSpec/AnyInstance
+  it "raises error if app has no domain" do
+    app = dummy_test_app("with-nothing")
 
-  it "displays error if domain is not found", vcr: true do
-    allow(Shell).to receive(:abort)
-      .with("Can't find domain. " \
-            "Maintenance mode is only supported for domains that use path based routing mode " \
-            "and have a route configured for the prefix '/' on either port 80 or 443.")
+    result = run_command("maintenance:on", "-a", app)
 
-    args = ["-a", "my-app-staging"]
-    Cpl::Cli.start([described_class::NAME, *args])
-
-    expect(Shell).to have_received(:abort).once
+    expect(result[:status]).to be(1)
+    expect(result[:stderr]).to include("Can't find domain")
   end
 
-  it "displays error if maintenance workload is not found", vcr: true do
-    allow(Shell).to receive(:abort)
-      .with("Can't find workload 'maintenance', " \
-            "please create it with 'cpl apply-template maintenance -a my-app-staging'.")
+  context "when app has domain" do
+    it "raises error if maintenance workload does not exist" do
+      app = dummy_test_app
 
-    args = ["-a", "my-app-staging"]
-    Cpl::Cli.start([described_class::NAME, *args])
+      run_command("apply-template", "gvc", "-a", app)
+      result = run_command("maintenance:on", "-a", app)
+      run_command("delete", "-a", app, "--yes")
 
-    expect(Shell).to have_received(:abort).once
-  end
-
-  it "does nothing if maintenance mode is already enabled", vcr: true do
-    expected_output = <<~OUTPUT
-      Maintenance mode is already enabled for app 'my-app-staging'.
-    OUTPUT
-
-    output = command_output do
-      args = ["-a", "my-app-staging"]
-      Cpl::Cli.start([described_class::NAME, *args])
+      expect(result[:status]).to be(1)
+      expect(result[:stderr]).to include("Can't find workload 'maintenance'")
     end
 
-    expect(output).to eq(expected_output)
-  end
+    context "when maintenance workload exists" do
+      let(:app) { dummy_test_app }
 
-  it "enables maintenance mode", vcr: true do
-    expected_output = <<~OUTPUT
-      Starting workload 'maintenance'... #{Shell.color('done!', :green)}
+      before do
+        run_command("apply-template", "gvc", "rails", "redis", "postgres", "maintenance", "-a", app)
+        run_command("build-image", "-a", app)
+        run_command("deploy-image", "-a", app)
+        run_command("ps:start", "-a", app, "--wait")
+      end
 
-      Waiting for workload 'maintenance' to be ready... #{Shell.color('done!', :green)}
+      after do
+        run_command("delete", "-a", app, "--yes")
+      end
 
-      Switching workload for domain 'my-app-staging.example.com' to 'maintenance'... #{Shell.color('done!', :green)}
+      it "does nothing if maintenance mode is already enabled" do
+        allow(Kernel).to receive(:sleep)
 
-      Stopping workload 'rails'... #{Shell.color('done!', :green)}
-      Stopping workload 'redis'... #{Shell.color('done!', :green)}
-      Stopping workload 'postgres'... #{Shell.color('done!', :green)}
+        run_command("maintenance:on", "-a", app)
+        result = run_command("maintenance:on", "-a", app)
 
-      Waiting for workload 'rails' to not be ready... #{Shell.color('done!', :green)}
-      Waiting for workload 'redis' to not be ready... #{Shell.color('done!', :green)}
-      Waiting for workload 'postgres' to not be ready... #{Shell.color('done!', :green)}
+        expect(result[:stderr]).to include("Maintenance mode is already enabled for app '#{app}'")
+      end
 
-      Maintenance mode enabled for app 'my-app-staging'.
-    OUTPUT
+      it "enables maintenance mode" do
+        allow(Kernel).to receive(:sleep)
 
-    output = command_output do
-      args = ["-a", "my-app-staging"]
-      Cpl::Cli.start([described_class::NAME, *args])
+        result = run_command("maintenance:on", "-a", app)
+
+        expect(result[:stderr]).to include("Maintenance mode enabled for app '#{app}'")
+      end
     end
-
-    expect(output).to eq(expected_output)
   end
 end
