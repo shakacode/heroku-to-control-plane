@@ -102,6 +102,10 @@ class Config # rubocop:disable Metrics/ClassLength
     end
   end
 
+  def app_config_for(app)
+    find_app_config(app)
+  end
+
   private
 
   def ensure_current_config!
