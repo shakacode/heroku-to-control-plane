@@ -25,13 +25,15 @@ class Controlplane # rubocop:disable Metrics/ClassLength
   def profile_create(profile, token)
     sensitive_data_pattern = /(?<=--token )(\S+)/
     cmd = "cpln profile create #{profile} --token #{token}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd, sensitive_data_pattern: sensitive_data_pattern)
   end
 
   def profile_delete(profile)
     cmd = "cpln profile delete #{profile}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
@@ -65,13 +67,14 @@ class Controlplane # rubocop:disable Metrics/ClassLength
 
   def image_login(org_name = config.org)
     cmd = "cpln image docker-login --org #{org_name}"
-    cmd += " > /dev/null 2>&1" if Shell.should_hide_output?
+    cmd += " > /dev/null 2>&1" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
   def image_pull(image)
     cmd = "docker pull #{image}"
-    cmd += " > /dev/null" if Shell.should_hide_output?
+    cmd += " > /dev/null" if Shell.should_hide_output? || ENV["RAILS_ENV"] == "test"
+    cmd += " 2>&1" if ENV["RAILS_ENV"] == "test"
     perform!(cmd)
   end
 
